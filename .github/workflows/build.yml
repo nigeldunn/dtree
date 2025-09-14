@@ -1,0 +1,172 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  release:
+    types: [ published ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Configure cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Check code format
+      run: cargo fmt -- --check
+
+    - name: Check the package for errors
+      run: cargo check --all
+
+    - name: Lint rust sources
+      run: cargo clippy --all-targets --all-features --tests --benches -- -D warnings
+
+    - name: Run tests
+      run: cargo test --all-features --workspace
+
+  build:
+    name: Build for ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+            target: x86_64-unknown-linux-gnu
+            artifact_name: dtree
+            asset_name: dtree-linux-amd64
+          - os: windows-latest
+            name: windows
+            target: x86_64-pc-windows-msvc
+            artifact_name: dtree.exe
+            asset_name: dtree-windows-amd64.exe
+          - os: macos-latest
+            name: macos
+            target: x86_64-apple-darwin
+            artifact_name: dtree
+            asset_name: dtree-macos-amd64
+          - os: macos-latest
+            name: macos-arm64
+            target: aarch64-apple-darwin
+            artifact_name: dtree
+            asset_name: dtree-macos-arm64
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Configure cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ matrix.target }}
+
+    - name: Build binary
+      run: cargo build --verbose --locked --release --target ${{ matrix.target }}
+
+    - name: Build archive
+      shell: bash
+      run: |
+        binary_name="dtree"
+        
+        if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+          binary_name="${binary_name}.exe"
+        fi
+        
+        # Build archive
+        if [[ "${{ runner.os }}" == "Windows" ]]; then
+          7z a "${{ matrix.asset_name }}.zip" "./target/${{ matrix.target }}/release/${binary_name}"
+        else
+          tar -czf "${{ matrix.asset_name }}.tar.gz" -C "./target/${{ matrix.target }}/release" "${binary_name}"
+        fi
+
+    - name: Upload binary (Linux/macOS)
+      if: runner.os != 'Windows'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.asset_name }}
+        path: ${{ matrix.asset_name }}.tar.gz
+
+    - name: Upload binary (Windows)
+      if: runner.os == 'Windows'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.asset_name }}
+        path: ${{ matrix.asset_name }}.zip
+
+    - name: Upload binaries to release
+      if: github.event_name == 'release'
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: ${{ matrix.asset_name }}.*
+        file_glob: true
+        tag: ${{ github.ref }}
+        overwrite: true
+
+  security_audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install cargo-audit
+      run: cargo install cargo-audit
+
+    - name: Run security audit
+      run: cargo audit
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: llvm-tools-preview
+
+    - name: Configure cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install cargo-llvm-cov
+      uses: taiki-e/install-action@cargo-llvm-cov
+
+    - name: Generate code coverage
+      run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+
+    - name: Setup LCOV
+      uses: hrishikesh-kadam/setup-lcov@v1
+
+    - name: Report code coverage
+      uses: zgosalvez/github-actions-report-lcov@v4
+      with:
+        coverage-files: lcov.info
+        minimum-coverage: 80
+        artifact-name: code-coverage-report
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        update-comment: true
