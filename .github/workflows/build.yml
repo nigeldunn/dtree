@@ -51,7 +51,12 @@ jobs:
             name: linux
             target: x86_64-unknown-linux-gnu
             artifact_name: dtree
-            asset_name: dtree-linux-amd64
+            asset_name: dtree-linux-amd64  
+          - os: ubuntu-latest
+            name: linux-arm64
+            target: armv7-unknown-linux-gnueabihf
+            artifact_name: dtree
+            asset_name: dtree-linux-arm64
           - os: windows-latest
             name: windows
             target: x86_64-pc-windows-msvc
