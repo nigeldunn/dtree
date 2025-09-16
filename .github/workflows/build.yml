@@ -96,6 +96,8 @@ jobs:
         key: ${{ matrix.target }}
 
     - name: Build binary
+      env:
+        CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
       run: cargo build --verbose --locked --release --target ${{ matrix.target }}
 
     - name: Build archive
