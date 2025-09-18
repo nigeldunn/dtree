@@ -110,6 +110,7 @@ jobs:
         key: ${{ matrix.target }}
 
     - name: Build binary
+      shell: bash
       env:
         # Configure linkers for musl targets
         CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
