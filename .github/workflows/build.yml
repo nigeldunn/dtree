@@ -49,14 +49,19 @@ jobs:
         include:
           - os: ubuntu-latest
             name: linux
-            target: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-musl
             artifact_name: dtree
-            asset_name: dtree-linux-amd64  
+            asset_name: dtree-linux-amd64-static
+          - os: ubuntu-latest
+            name: linux-arm
+            target: armv7-unknown-linux-musleabihf
+            artifact_name: dtree
+            asset_name: dtree-linux-arm-static
           - os: ubuntu-latest
             name: linux-arm64
-            target: armv7-unknown-linux-gnueabihf
+            target: aarch64-unknown-linux-musl
             artifact_name: dtree
-            asset_name: dtree-linux-arm64
+            asset_name: dtree-linux-arm64-static
           - os: windows-latest
             name: windows
             target: x86_64-pc-windows-msvc
@@ -77,12 +82,21 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Dependencies
-      if: matrix.name == 'linux-arm64'
+    - name: Install musl toolchains
+      if: contains(matrix.target, 'musl')
       run: |
-        sudo apt-get update && \
-        sudo apt-get upgrade -y && \
-        sudo apt-get install -y gcc-arm-linux-gnueabihf && \
+        sudo apt-get update
+        sudo apt-get install -y musl-tools musl-dev
+        
+        # Install cross-compilation toolchains for ARM targets
+        if [[ "${{ matrix.target }}" == "armv7-unknown-linux-musleabihf" ]]; then
+          sudo apt-get install -y gcc-arm-linux-gnueabihf
+        fi
+        
+        if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-musl" ]]; then
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+        fi
+        
         sudo apt-get clean
 
     - name: Install Rust
@@ -97,8 +111,43 @@ jobs:
 
     - name: Build binary
       env:
-        CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
-      run: cargo build --verbose --locked --release --target ${{ matrix.target }}
+        # Configure linkers for musl targets
+        CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER: arm-linux-gnueabihf-gcc
+        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
+        # Configure for static linking with musl
+        CC_x86_64_unknown_linux_musl: musl-gcc
+        CC_armv7_unknown_linux_musleabihf: arm-linux-gnueabihf-gcc
+        CC_aarch64_unknown_linux_musl: aarch64-linux-gnu-gcc
+      run: |
+        # Set RUSTFLAGS for static compilation
+        if [[ "${{ matrix.target }}" == *"musl"* ]]; then
+          export RUSTFLAGS='-C target-feature=+crt-static -C link-self-contained=yes'
+        else
+          export RUSTFLAGS='-C target-feature=+crt-static'
+        fi
+        
+        cargo build --verbose --locked --release --target ${{ matrix.target }}
+
+    - name: Verify static binary
+      if: contains(matrix.target, 'musl')
+      run: |
+        binary_path="./target/${{ matrix.target }}/release/dtree"
+        
+        echo "Checking if binary is statically linked..."
+        if ldd "$binary_path" 2>&1 | grep -q "not a dynamic executable"; then
+          echo "✅ Binary is statically linked"
+        elif ldd "$binary_path" 2>&1 | grep -q "statically linked"; then
+          echo "✅ Binary is statically linked"
+        else
+          echo "❌ Binary appears to have dynamic dependencies:"
+          ldd "$binary_path" || true
+          echo "This may still work, but the binary is not fully static"
+        fi
+        
+        echo "Binary size: $(du -h "$binary_path" | cut -f1)"
+        echo "Binary info:"
+        file "$binary_path"
 
     - name: Build archive
       shell: bash
